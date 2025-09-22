@@ -4,9 +4,14 @@ import 'bottom_bar.dart';
 import 'under_construction.dart';
 import 'top_bar.dart';
 import 'map_screen.dart';
+import 'pomodoro_screen.dart';
 
 class WorldMapScreen extends StatelessWidget {
   const WorldMapScreen({super.key});
+
+  static const double fireXpx = 5 * 60.0; // ≈ 5/6 szerokości – wyregulujesz liczbą
+  static const double fireYpx = 1 * 220.0; // ≈ 2/3 wysokości – wyregulujesz liczbą
+  static const double fireSize = 72;
 
   @override
   Widget build(BuildContext context) {
@@ -47,6 +52,22 @@ class WorldMapScreen extends StatelessWidget {
             ],
           ),
         ),
+        Positioned(
+            left: fireXpx,
+            top: fireYpx,
+            child: GestureDetector(
+              onTap: () {
+                Navigator.of(context).push(
+                  MaterialPageRoute(builder: (_) => const PomodoroScreen()),
+                );
+              },
+              child: Image.asset(
+                'assets/icons/world_map_fireplace.png',
+                width: fireSize,
+                height: fireSize,
+              ),
+            ),
+          ),
 
           // 3) Dolny pasek jako OVERLAY w Stacku
           BottomBarOverlay(
@@ -69,20 +90,4 @@ class WorldMapScreen extends StatelessWidget {
       ),
     );
   }
-}
-
-class _TopIcon extends StatelessWidget {
-  final String asset;
-  final VoidCallback onTap;
-  const _TopIcon(this.asset, this.onTap, {super.key});
-
-  @override
-  Widget build(BuildContext context) => GestureDetector(
-        onTap: onTap,
-        child: SizedBox(
-          width: 40,
-          height: 40,
-          child: Image.asset(asset, fit: BoxFit.contain),
-        ),
-      );
 }
