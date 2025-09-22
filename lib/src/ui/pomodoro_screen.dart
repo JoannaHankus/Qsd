@@ -4,6 +4,23 @@ import 'top_bar.dart';
 import 'world_map_screen.dart';
 import 'under_construction.dart';
 import 'package:audioplayers/audioplayers.dart';
+import 'dart:async';
+import 'package:flutter/services.dart';
+
+enum PomodoroPhase { idle, session, shortBreak, longBreak }
+
+class PomodoroSettings {
+  final int session;     // min
+  final int shortBreak;  // min
+  final int longBreak;   // min
+  final int longEvery;   // co ile sesji długa przerwa
+  const PomodoroSettings({
+    required this.session,
+    required this.shortBreak,
+    required this.longBreak,
+    required this.longEvery,
+  });
+}
 
 class PomodoroScreen extends StatefulWidget  {
   const PomodoroScreen({super.key});
@@ -13,6 +30,15 @@ class PomodoroScreen extends StatefulWidget  {
 }
 
 class _PomodoroScreenState extends State<PomodoroScreen> {
+  PomodoroSettings _settings = const PomodoroSettings(session: 50, shortBreak: 5, longBreak: 30, longEvery: 3);
+  PomodoroPhase _phase = PomodoroPhase.idle; 
+  int _sessionIndex = 1; // 1,2,3... 
+  int _breakIndex = 0; // 1,2,3... 
+  Duration _remaining = Duration.zero; 
+  Duration _currentTotal = Duration.zero; // pełny czas bieżącej fazy 
+  Timer? _ticker; 
+  bool _isPaused = false;
+
   final AudioPlayer _player = AudioPlayer();
   bool _isPlaying = false;
 
@@ -34,6 +60,101 @@ class _PomodoroScreenState extends State<PomodoroScreen> {
       setState(() => _isPlaying = true);
     }
   }
+  void _buzz() {
+    HapticFeedback.mediumImpact(); // lub lightImpact/heavyImpact/selectionClick
+  }
+  
+
+  // ===== Pomodoro: public getters do dialogu =====
+  bool get isRunning => _phase != PomodoroPhase.idle;
+  bool get isPaused => _isPaused;
+  PomodoroSettings get settings => _settings;
+  Duration get remaining => _remaining;
+  Duration get currentTotal => _currentTotal;
+
+  String get phaseLabel => switch (_phase) {
+    PomodoroPhase.session     => 'Session $_sessionIndex',
+    PomodoroPhase.shortBreak  => 'Break $_breakIndex',
+    PomodoroPhase.longBreak   => 'Long break',
+    PomodoroPhase.idle        => 'Idle',
+  };
+
+  String _fmt(Duration d) {
+    final m = d.inMinutes.remainder(60).toString().padLeft(2, '0');
+    final s = d.inSeconds.remainder(60).toString().padLeft(2, '0');
+    final h = d.inHours;
+    return h > 0 ? '$h:$m:$s' : '$m:$s';
+  }
+
+  // ===== API wywoływane z dialogu =====
+  void startWithSettings(PomodoroSettings s) {
+    setState(() {
+      _settings = s;
+      _sessionIndex = 1;
+      _breakIndex = 0;
+    });
+    _startSession();
+  }
+
+  void togglePauseTimer() {
+    if (_phase == PomodoroPhase.idle) return;
+    setState(() => _isPaused = !_isPaused);
+  }
+
+  void skipPhase() {
+    _ticker?.cancel();
+    _onPhaseComplete();
+  }
+
+  // ===== Sekwencja =====
+  void _startSession() {
+    _startPhase(PomodoroPhase.session, Duration(minutes: _settings.session));
+  }
+
+  void _startShortBreak() {
+    _breakIndex++;
+    _startPhase(PomodoroPhase.shortBreak, Duration(minutes: _settings.shortBreak));
+  }
+
+  void _startLongBreak() {
+    _breakIndex++;
+    _startPhase(PomodoroPhase.longBreak, Duration(minutes: _settings.longBreak));
+  }
+
+  void _startPhase(PomodoroPhase p, Duration d) {
+    _ticker?.cancel();
+    setState(() {
+      _phase = p;
+      _remaining = d;
+      _currentTotal = d;
+      _isPaused = false;
+    });
+    _ticker = Timer.periodic(const Duration(seconds: 1), (t) {
+      if (!mounted) return;
+      if (_isPaused) return;
+      if (_remaining.inSeconds > 0) {
+        setState(() => _remaining -= const Duration(seconds: 1));
+      } else {
+        t.cancel();
+        _onPhaseComplete();
+      }
+    });
+  }
+
+  void _onPhaseComplete() {
+    _buzz();
+    if (_phase == PomodoroPhase.session) {
+      if (_sessionIndex % _settings.longEvery == 0) {
+        _startLongBreak();
+      } else {
+        _startShortBreak();
+      }
+    } else {
+      _sessionIndex++;
+      _startSession();
+    }
+  }
+
 
   @override
   Widget build(BuildContext context) {
@@ -108,9 +229,27 @@ class _PomodoroScreenState extends State<PomodoroScreen> {
                       asset: 'assets/icons/pomodoro_timer.png',
                       onTap: () => showDialog(
                         context: context,
-                        builder: (_) => const _PomodoroTimerDialog(),
+                        barrierDismissible: true,
+                        builder: (_) => PomodoroTimerDialog(
+                          // widok/odliczanie czytany z ekranu
+                          titleLabel: 'Timer',
+                          getIsRunning: () => isRunning,
+                          getPhaseLabel: () => phaseLabel,
+                          getRemaining: () => remaining,
+                          getCurrentTotal: () => currentTotal,
+                          getIsPaused: () => isPaused,
+
+                          // sterowanie z ekranu
+                          onPauseResume: togglePauseTimer,
+                          onSkip: skipPhase,
+
+                          // ustawienia startowe + start sekwencji
+                          initial: settings,
+                          onStart: startWithSettings,
+                        ),
                       ),
                     ),
+
                   ],
                 ),
               ),
@@ -249,18 +388,72 @@ class PomodoroVolumeDialog  extends StatelessWidget  {
 }
 
 // ——— POPUP: Timer ———
-class _PomodoroTimerDialog extends StatefulWidget {
-  const _PomodoroTimerDialog();
+class PomodoroTimerDialog extends StatefulWidget {
+  // wejścia do dialogu
+  final String titleLabel;
+
+  // GETTERY: dialog czyta stan z ekranu
+  final bool Function() getIsRunning;
+  final String Function() getPhaseLabel;
+  final Duration Function() getRemaining;
+  final Duration Function() getCurrentTotal;
+  final bool Function() getIsPaused;
+
+  // AKCJE: delegowane do ekranu
+  final VoidCallback onPauseResume;
+  final VoidCallback onSkip;
+
+  // SETUP: wstępne wartości i start sekwencji
+  final PomodoroSettings initial;
+  final void Function(PomodoroSettings) onStart;
+
+  const PomodoroTimerDialog({
+    super.key,
+    required this.titleLabel,
+    required this.getIsRunning,
+    required this.getPhaseLabel,
+    required this.getRemaining,
+    required this.getCurrentTotal,
+    required this.getIsPaused,
+    required this.onPauseResume,
+    required this.onSkip,
+    required this.initial,
+    required this.onStart,
+  });
 
   @override
-  State<_PomodoroTimerDialog> createState() => _PomodoroTimerDialogState();
+  State<PomodoroTimerDialog> createState() => _PomodoroTimerDialogState();
 }
 
-class _PomodoroTimerDialogState extends State<_PomodoroTimerDialog> {
-  int session = 50, brk = 5, longBreak = 30, every = 3;
+class _PomodoroTimerDialogState extends State<PomodoroTimerDialog> {
+  // lokalne kopie dla SETUP
+  late int _session   = widget.initial.session;
+  late int _shortBr   = widget.initial.shortBreak;
+  late int _longBr    = widget.initial.longBreak;
+  late int _longEvery = widget.initial.longEvery;
+
+  // aby przełączyć się na RUNNING natychmiast po Start (bez czekania na rebuild)
+  bool _forceRunning = false;
+  Timer? _raf; // timer odświeżający UI
+
+  @override
+  void initState() {
+    super.initState();
+    // co sekundę odśwież UI, aby licznik i progress się zmieniały
+    _raf = Timer.periodic(const Duration(seconds: 1), (_) {
+      if (mounted) setState(() {});
+    });
+  }
+
+  @override
+  void dispose() {
+    _raf?.cancel();
+    super.dispose();
+  }
 
   @override
   Widget build(BuildContext context) {
+    final running = _forceRunning || widget.getIsRunning();
     return Dialog(
       backgroundColor: Colors.transparent,
       insetPadding: const EdgeInsets.symmetric(horizontal: 16, vertical: 24),
@@ -273,51 +466,172 @@ class _PomodoroTimerDialogState extends State<_PomodoroTimerDialog> {
           ),
           Padding(
             padding: const EdgeInsets.fromLTRB(16, 12, 16, 16),
-            child: Column(
-              mainAxisSize: MainAxisSize.min,
-              children: [
-                // nagłówek
-                Row(
-                  children: [
-                    GestureDetector(
-                      onTap: () => Navigator.pop(context),
-                      child: Image.asset('assets/icons/arrow.png', width: 28, height: 28),
-                    ),
-                    const SizedBox(width: 8),
-                    const Text('Timer', style: TextStyle(fontSize: 18)),
-                  ],
-                ),
-                const SizedBox(height: 16),
-
-                _TimerRow(label: 'Session', value: session, unit: 'minutes',
-                  onDec: () => setState(() => session = (session - 1).clamp(1, 999)),
-                  onInc: () => setState(() => session = (session + 1).clamp(1, 999)),
-                ),
-                _TimerRow(label: 'Break', value: brk, unit: 'minutes',
-                  onDec: () => setState(() => brk = (brk - 1).clamp(1, 999)),
-                  onInc: () => setState(() => brk = (brk + 1).clamp(1, 999)),
-                ),
-                _TimerRow(label: 'Long break', value: longBreak, unit: 'minutes',
-                  onDec: () => setState(() => longBreak = (longBreak - 1).clamp(1, 999)),
-                  onInc: () => setState(() => longBreak = (longBreak + 1).clamp(1, 999)),
-                ),
-                _TimerRow(label: 'Long break every', value: every, unit: 'sessions',
-                  onDec: () => setState(() => every = (every - 1).clamp(1, 99)),
-                  onInc: () => setState(() => every = (every + 1).clamp(1, 99)),
-                ),
-                const SizedBox(height: 12),
-
-                // Start (placeholder)
-                GestureDetector(
-                  onTap: () {/* start timer */},
-                  child: Image.asset('assets/icons/pomodoro_start.png', height: 48, fit: BoxFit.contain),
-                ),
-              ],
-            ),
+            child: running ? _buildRunning(context) : _buildSetup(context),
           ),
         ],
       ),
     );
+  }
+
+  // ---------- SETUP ----------
+  Widget _buildSetup(BuildContext context) {
+    return Column(
+      mainAxisSize: MainAxisSize.min,
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Row(
+          children: [
+            GestureDetector(
+              onTap: () => Navigator.pop(context),
+              child: Image.asset('assets/icons/arrow.png', width: 28, height: 28),
+            ),
+            const SizedBox(width: 8),
+            Text(widget.titleLabel, style: const TextStyle(fontSize: 18, fontWeight: FontWeight.w600)),
+          ],
+        ),
+        const SizedBox(height: 8),
+        const Text('Idle', style: TextStyle(fontSize: 14, fontWeight: FontWeight.w500)),
+        const SizedBox(height: 12),
+
+        _TimerRow(
+          label: 'Session',
+          value: _session,
+          unit: 'minutes',
+          onDec: () => setState(() => _session   = (_session - 1).clamp(1, 999)),
+          onInc: () => setState(() => _session   = (_session + 1).clamp(1, 999)),
+        ),
+        _TimerRow(
+          label: 'Break',
+          value: _shortBr,
+          unit: 'minutes',
+          onDec: () => setState(() => _shortBr   = (_shortBr - 1).clamp(1, 999)),
+          onInc: () => setState(() => _shortBr   = (_shortBr + 1).clamp(1, 999)),
+        ),
+        _TimerRow(
+          label: 'Long break',
+          value: _longBr,
+          unit: 'minutes',
+          onDec: () => setState(() => _longBr    = (_longBr - 1).clamp(1, 999)),
+          onInc: () => setState(() => _longBr    = (_longBr + 1).clamp(1, 999)),
+        ),
+        _TimerRow(
+          label: 'Long break every',
+          value: _longEvery,
+          unit: 'sessions',
+          onDec: () => setState(() => _longEvery = (_longEvery - 1).clamp(1, 99)),
+          onInc: () => setState(() => _longEvery = (_longEvery + 1).clamp(1, 99)),
+        ),
+        const SizedBox(height: 12),
+
+        Align(
+          alignment: Alignment.center,
+          child: GestureDetector(
+            onTap: () {
+              widget.onStart(
+                PomodoroSettings(
+                  session: _session,
+                  shortBreak: _shortBr,
+                  longBreak: _longBr,
+                  longEvery: _longEvery,
+                ),
+              );
+              // zamiast zamykać dialog, natychmiast przełącz widok na RUNNING
+              setState(() => _forceRunning = true);
+            },
+            child: Image.asset('assets/icons/pomodoro_start.png', height: 48, fit: BoxFit.contain),
+          ),
+        ),
+      ],
+    );
+  }
+
+  // ---------- RUNNING ----------
+  Widget _buildRunning(BuildContext context) {
+    final label = widget.getPhaseLabel();
+    final rem   = widget.getRemaining();
+    final total = widget.getCurrentTotal();
+    final paused= widget.getIsPaused();
+    final prog  = total.inMilliseconds == 0
+        ? 0.0
+        : 1 - rem.inMilliseconds / total.inMilliseconds;
+
+    return Column(
+      mainAxisSize: MainAxisSize.min,
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Row(
+          children: [
+            GestureDetector(
+              onTap: () => Navigator.pop(context),
+              child: Image.asset('assets/icons/arrow.png', width: 28, height: 28),
+            ),
+            const SizedBox(width: 8),
+            Text(widget.titleLabel, style: const TextStyle(fontSize: 18, fontWeight: FontWeight.w600)),
+          ],
+        ),
+        const SizedBox(height: 8),
+        Text(label, style: const TextStyle(fontSize: 14, fontWeight: FontWeight.w500)),
+        const SizedBox(height: 12),
+
+        Center(
+          child: SizedBox(
+            width: 220,
+            height: 220,
+            child: CustomPaint(
+              painter: _RingPainter(progress: prog),
+              child: Center(
+                child: Text(
+                  _format(rem),
+                  style: const TextStyle(fontSize: 42, fontWeight: FontWeight.w600),
+                ),
+              ),
+            ),
+          ),
+        ),
+        const SizedBox(height: 12),
+
+        Row(
+          mainAxisAlignment: MainAxisAlignment.center,
+          children: [
+            GestureDetector(
+              onTap: widget.onPauseResume,
+              child: SizedBox(
+                width: 56, height: 56,
+                child: Image.asset(paused
+                    ? 'assets/icons/pomodoro_play.png'
+                    : 'assets/icons/pomodoro_pause.png'),
+              ),
+            ),
+            const SizedBox(width: 12),
+            GestureDetector(
+              onTap: widget.onSkip,
+              child: Container(
+                padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+                decoration: BoxDecoration(
+                  color: const Color(0xFFEBD2A8).withOpacity(0.9),
+                  borderRadius: BorderRadius.circular(6),
+                ),
+                child: Row(
+                  children: [
+                    const Text('Skip session'),
+                    const SizedBox(width: 6),
+                    Image.asset('assets/icons/chevron_left.png',
+                        width: 16, height: 16, fit: BoxFit.contain),
+                  ],
+                ),
+              ),
+            ),
+          ],
+        ),
+      ],
+    );
+  }
+
+  String _format(Duration d) {
+    final m = d.inMinutes.remainder(60).toString().padLeft(2, '0');
+    final s = d.inSeconds.remainder(60).toString().padLeft(2, '0');
+    final h = d.inHours;
+    return h > 0 ? '$h:$m:$s' : '$m:$s';
   }
 }
 
@@ -378,19 +692,6 @@ class _CircleIconButton extends StatelessWidget {
   }
 }
 
-class _RoundBtn extends StatelessWidget {
-  final String asset;
-  final VoidCallback onTap;
-  const _RoundBtn(this.asset, {required this.onTap});
-  @override
-  Widget build(BuildContext context) {
-    return GestureDetector(
-      onTap: onTap,
-      child: SizedBox(width: 58, height: 58, child: Image.asset(asset, fit: BoxFit.contain)),
-    );
-  }
-}
-
 class _RoundSmallBtn extends StatelessWidget {
   final String asset;
   final VoidCallback onTap;
@@ -438,25 +739,35 @@ class _Chevron extends StatelessWidget {
   }
 }
 
-// ten sam top-bar co na innych ekranach
-// class _TopBar extends StatelessWidget {
-//   final List<String> icons;
-//   final void Function(int) onTap;
-//   const _TopBar({required this.icons, required this.onTap, super.key});
+class _RingPainter extends CustomPainter {
+  final double progress; // 0..1
+  _RingPainter({required this.progress});
 
-//   @override
-//   Widget build(BuildContext context) => Row(
-//         mainAxisAlignment: MainAxisAlignment.spaceEvenly,
-//         children: [
-//           for (int i = 0; i < icons.length; i++)
-//             GestureDetector(
-//               onTap: () => onTap(i),
-//               child: SizedBox(
-//                 width: 40,
-//                 height: 40,
-//                 child: Image.asset(icons[i], fit: BoxFit.contain),
-//               ),
-//             ),
-//         ],
-//       );
-// }
+  @override
+  void paint(Canvas canvas, Size size) {
+    final center = Offset(size.width / 2, size.height / 2);
+    final radius = size.width / 2 - 8;
+
+    final track = Paint()
+      ..color = const Color(0xFFCFBDA2)
+      ..style = PaintingStyle.stroke
+      ..strokeWidth = 12
+      ..strokeCap = StrokeCap.round;
+
+    final progressPaint = Paint()
+      ..color = const Color(0xFF3E2D20)
+      ..style = PaintingStyle.stroke
+      ..strokeWidth = 12
+      ..strokeCap = StrokeCap.round;
+
+    canvas.drawCircle(center, radius, track);
+
+    final start = -90 * (3.1415926 / 180);          // od góry
+    final sweep = 2 * 3.1415926 * progress;
+    final rect = Rect.fromCircle(center: center, radius: radius);
+    canvas.drawArc(rect, start, sweep, false, progressPaint);
+  }
+
+  @override
+  bool shouldRepaint(covariant _RingPainter old) => old.progress != progress;
+}
