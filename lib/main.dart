@@ -135,7 +135,7 @@ class QuesdoMapApp extends StatelessWidget {
   Widget build(BuildContext context) {
     return MaterialApp(
       title: 'Parchment Map',
-      theme: ThemeData(useMaterial3: true),
+      theme: ThemeData(useMaterial3: true, fontFamily: 'Lora',),
       home: const MapScreen(),
       debugShowCheckedModeBanner: false,
     );

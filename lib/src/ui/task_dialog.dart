@@ -86,70 +86,105 @@ class _TaskDialogState extends State<TaskDialog> {
 
   @override
   Widget build(BuildContext context) {
-    return Dialog(
-      backgroundColor: Colors.transparent,
-      insetPadding: const EdgeInsets.symmetric(horizontal: 16, vertical: 24),
-      child: Stack(
-        children: [
-          // Ramka PNG
-          Positioned.fill(
-            child: Image.asset('assets/images/add_task_bg.png', fit: BoxFit.fill),
-          ),
-          Padding(
-            padding: const EdgeInsets.fromLTRB(16, 12, 16, 16),
-            child: Column(
-              mainAxisSize: MainAxisSize.min,
-              crossAxisAlignment: CrossAxisAlignment.start,
+    final mq = MediaQuery.of(context);
+    final kb = mq.viewInsets.bottom;          // wysokość klawiatury
+    final safeTop = mq.viewPadding.top;
+    const outerMarginV = 24.0;
+    final availableHeight = (mq.size.height - kb - safeTop - outerMarginV * 2)
+        .clamp(300.0, double.infinity);
+   return Dialog(
+    backgroundColor: Colors.transparent,
+    insetPadding: const EdgeInsets.symmetric(horizontal: 16, vertical: outerMarginV),
+
+    // >>> 1) Usuń wpływ klawiatury na layout dialogu
+    child: MediaQuery.removeViewInsets(
+      removeBottom: true,
+      context: context,
+
+      child: Center(
+        // >>> 2) Ogranicz sufit wysokości okna do wolnego miejsca nad klawiaturą
+        child: ConstrainedBox(
+          constraints: BoxConstraints(maxHeight: availableHeight, maxWidth: 480),
+
+          // >>> 3) Scrolluj zawartość zamiast wypychać dialog
+          child: Stack(
               children: [
-                Row(children: [
-                  GestureDetector(onTap: () => Navigator.pop(context), child: Image.asset('assets/icons/arrow.png', width: 24)),
-                  const Spacer(),
-                  TextButton(onPressed: _accept, child: const Text('Accept')),
-                ]),
-                const SizedBox(height: 6),
-                TextField(
-                  controller: _title,
-                  decoration: const InputDecoration(hintText: 'Task name', border: UnderlineInputBorder()),
-                ),
-                const SizedBox(height: 12),
-                _RowIconText(
-                  icon: 'assets/icons/sun.png',
-                  label: 'Date',
-                  value: _start == null ? '—' : _fmtRange(_start, _end),
-                  onTap: _openCalendar,
-                ),
-                _RowIconText(
-                  icon: 'assets/icons/bell.png',
-                  label: 'Reminder',
-                  value: _alarmOn ? '${_two(_hour)}:${_two(_minute)}' : 'Off',
-                  onTap: _openReminder,
-                ),
-                _RowIconText(
-                  icon: 'assets/icons/quill.png',
-                  label: 'Notes',
-                  value: '',
-                  onTap: () {},
-                ),
-                TextField(
-                  controller: _notes,
-                  decoration: const InputDecoration(border: UnderlineInputBorder(), hintText: 'Write a note...'),
-                ),
-                const SizedBox(height: 12),
-                Row(
-                  mainAxisAlignment: MainAxisAlignment.spaceAround,
-                  children: [
-                    _ShieldPicker(asset: 'assets/icons/easy.png', selected: _diff == Difficulty.easy, onTap: () => setState(() => _diff = Difficulty.easy)),
-                    _ShieldPicker(asset: 'assets/icons/medium.png', selected: _diff == Difficulty.medium, onTap: () => setState(() => _diff = Difficulty.medium)),
-                    _ShieldPicker(asset: 'assets/icons/hard.png', selected: _diff == Difficulty.hard, onTap: () => setState(() => _diff = Difficulty.hard)),
-                  ],
+              ClipRRect(
+                borderRadius: BorderRadius.circular(12),
+                // tło ramki PNG
+                child: SizedBox(height: 370,
+                  child: Image.asset('assets/images/add_task_bg.png', fit: BoxFit.fill),
+                ),),
+
+                // właściwa treść – przewijalna
+                SingleChildScrollView(
+                  // >>> 4) Dodaj padding równy klawiaturze, ale W ŚRODKU scrolla
+                  padding: EdgeInsets.fromLTRB(16, 12, 16, 16 + kb),
+                  child: Column(
+                    mainAxisSize: MainAxisSize.min,
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Row(
+                        children: [
+                          GestureDetector(
+                            onTap: () => Navigator.pop(context),
+                            child: Image.asset('assets/icons/arrow.png', width: 28, height: 28),
+                          ),
+                          const Spacer(),
+                          TextButton(onPressed: _accept, child: const Text('Accept', style: TextStyle( fontWeight: FontWeight.bold),)),
+                        ],
+                      ),
+                      const SizedBox(height: 8),
+                      TextField(
+                        controller: _title,
+                        textInputAction: TextInputAction.next,
+                        decoration: const InputDecoration(
+                          hintText: 'Task name',
+                          border: UnderlineInputBorder(),
+                        ),
+                      ),
+                      const SizedBox(height: 12),
+                    _RowIconText(
+                      icon: 'assets/icons/sun.png',
+                      label: 'Date',
+                      value: _start == null ? '—' : _fmtRange(_start, _end),
+                      onTap: _openCalendar,
+                    ),
+                    _RowIconText(
+                      icon: 'assets/icons/bell.png',
+                      label: 'Reminder',
+                      value: _alarmOn ? '${_two(_hour)}:${_two(_minute)}' : 'Off',
+                      onTap: _openReminder,
+                    ),
+                    _RowIconText(
+                      icon: 'assets/icons/quill.png',
+                      label: 'Notes',
+                      value: '',
+                      onTap: () {},
+                    ),
+                    TextField(
+                      controller: _notes,
+                      decoration: const InputDecoration(border: UnderlineInputBorder(), hintText: 'Write a note...'),
+                    ),
+                    const SizedBox(height: 12),
+                    Row(
+                      mainAxisAlignment: MainAxisAlignment.spaceAround,
+                      children: [
+                        _ShieldPicker(asset: 'assets/icons/easy.png', selected: _diff == Difficulty.easy, onTap: () => setState(() => _diff = Difficulty.easy)),
+                        _ShieldPicker(asset: 'assets/icons/medium.png', selected: _diff == Difficulty.medium, onTap: () => setState(() => _diff = Difficulty.medium)),
+                        _ShieldPicker(asset: 'assets/icons/hard.png', selected: _diff == Difficulty.hard, onTap: () => setState(() => _diff = Difficulty.hard)),
+                      ],
+                    ),
+                    ],
+                  ),
                 ),
               ],
             ),
           ),
-        ],
+        ),
       ),
     );
-  }
+    }
 }
 
 class _RowIconText extends StatelessWidget {
@@ -188,9 +223,15 @@ class _ShieldPicker extends StatelessWidget {
       onTap: onTap,
       child: Stack(
         alignment: Alignment.center,
+        clipBehavior: Clip.none,
         children: [
-          if (selected) Image.asset('assets/icons/selected.png', width: 64),
-          Image.asset(asset, width: 48),
+          if (selected)  Transform.translate(
+            offset: const Offset(0, 10), // 👈 tylko obrazek przesunięty w dół o 4 px
+            child: Image.asset('assets/icons/selected.png', width: 64),
+          ),
+          Transform.translate(
+            offset: const Offset(0, -10),
+            child:Image.asset(asset, width: 70, height: 70)),
         ],
       ),
     );
@@ -283,7 +324,11 @@ class _CalendarDialogState extends State<_CalendarDialog> {
               alignment: Alignment.centerRight,
               child: TextButton(
                 onPressed: _start == null ? null : () => Navigator.pop(context, _DateRange(_start!, _end)),
-                child: const Text('Accept'),
+                child: const Text('Accept', 
+                  style: TextStyle(
+                    fontWeight: FontWeight.bold, // zmapuje się na MyFont-Bold.ttf
+                  ),
+                ),
               ),
             ),
           ]),
@@ -333,7 +378,7 @@ class _ReminderDialogState extends State<_ReminderDialog> {
               const Spacer(),
               const Text('Reminder'),
               const Spacer(),
-              TextButton(onPressed: () => Navigator.pop(context, _ReminderData(on: _on, hour: _h, minute: _m, volume: _v)), child: const Text('Accept')),
+              TextButton(onPressed: () => Navigator.pop(context, _ReminderData(on: _on, hour: _h, minute: _m, volume: _v)), child: const Text('Accept', style: TextStyle( fontWeight: FontWeight.bold),)),
             ]),
             const SizedBox(height: 8),
             Row(mainAxisAlignment: MainAxisAlignment.center, children: [

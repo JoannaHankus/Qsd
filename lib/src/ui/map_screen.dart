@@ -2,7 +2,11 @@ import 'dart:ui' as ui;
 import 'package:flutter/material.dart';
 import 'map_painter.dart';
 import 'task_dialog.dart';
-import 'dart:math';
+import 'bottom_bar.dart';
+import 'top_bar.dart';
+import 'world_map_screen.dart';
+import 'under_construction.dart';
+import 'dart:math' as math;
 
 // Helper do ładowania sekwencji klatek (osobne pliki PNG)
 class SpriteFrames {
@@ -39,18 +43,26 @@ class _MapScreenState extends State<MapScreen> {
   final List<_MapDot> _dots = [];
 
   // Sprites rolek
-  static const _framesCount = 8;
+  static const _framesCount = 3;
   static const _pxPerFrame = 16.0; // co ile px scrola przeskakiwać klatkę
   SpriteFrames? _topSeq, _botSeq;
   int _frame = 0;
   double _lastOff = 0;
 
+
+  static const double _vertStep     = 0.09;  // co ile "w dół" pojawia się kolejny punkt (9% wysokości)
+  static const double _periodRelY   = 0.30;  // pełna fala co 30% wysokości
+  static const double _amplitude    = 0.22;  // amplituda w osi X (22% szerokości)
+  static const double _xCenter      = 0.5;   // środkowa linia sinusa (poziomo)
+  static const double _xMargin      = 0.08;  // margines od krawędzi, by punkty nie wychodziły poza zwój
+  static const double _phase        = 0.0;
+
   @override
   void initState() {
     super.initState();
     WidgetsBinding.instance.addPostFrameCallback((_) async {
-      _topSeq = await loadFrames(context, 'assets/parchment/roll_top_{i}.png', _framesCount);
-      _botSeq = await loadFrames(context, 'assets/parchment/roll_bottom_{i}.png', _framesCount);
+      _topSeq = await loadFrames(context, 'assets/parchment/roll_{i}.png', _framesCount);
+      _botSeq = await loadFrames(context, 'assets/parchment/roll_{i}.png', _framesCount);
       if (mounted) setState(() {});
     });
     _scroll.addListener(_onScroll);
@@ -83,9 +95,19 @@ class _MapScreenState extends State<MapScreen> {
     setState(() => _addingMode = false);
     if (task == null) return;
 
-    final relX = 0.3 + Random().nextDouble() * 0.4; // w przedziale 0.3–0.7
-    final lastRelY = _dots.isEmpty ? 0.1 : _dots.last.relY;
-    final relY = (lastRelY + 0.15).clamp(0.0, 1.0);
+    // 2) Wyznacz relY: rośnij w dół co _vertStep (bazując na ostatnim punkcie)
+    final lastRelY = _dots.isEmpty ? (72 / parchmentSize.height) : _dots.map((d) => d.relY).reduce(math.max);
+    final relY = (lastRelY + _vertStep).clamp(0.0, 0.98);
+
+    // 3) RelX wg sinusa: x = x0 + A * sin(2π * y/okres + faza)
+    //    Zadbaj, by nie wyjść poza marginesy: skuteczna amplituda <= 0.5 - _xMargin
+    final ampMax = 0.5 - _xMargin;
+    final A = math.min(_amplitude, ampMax);
+    final relX = (_xCenter + A * math.sin(2 * math.pi * (relY / _periodRelY) + _phase))
+        .clamp(_xMargin, 1 - _xMargin);
+    // final relX = 0.3 + Random().nextDouble() * 0.4; // w przedziale 0.3–0.7
+    // final lastRelY = _dots.isEmpty ? 0.1 : _dots.last.relY;
+    // final relY = (lastRelY + 0.15).clamp(0.0, 0.1);
 
 
     final color = switch (task.difficulty) {
@@ -125,58 +147,92 @@ class _MapScreenState extends State<MapScreen> {
 }
 
   @override
-  Widget build(BuildContext context) {
-    return Scaffold(
-      body: Container(
-        decoration: const BoxDecoration(
-          image: DecorationImage(
-            image: AssetImage('assets/images/wood_bg.png'),
-            fit: BoxFit.cover,
-          ),
+  @override
+Widget build(BuildContext context) {
+  return Scaffold(
+    resizeToAvoidBottomInset: false,
+    body: Container(
+      decoration: const BoxDecoration(
+        image: DecorationImage(
+          image: AssetImage('assets/images/wood_bg.png'),
+          fit: BoxFit.cover,
         ),
-        child: SafeArea(
-          child: Column(
-            children: [
-              const SizedBox(height: 6),
-              _TopBar(
-                icons: const [
-                  'assets/icons/top_1.png',
-                  'assets/icons/top_2.png',
-                  'assets/icons/top_3.png',
-                  'assets/icons/top_4.png',
-                ],
-                onTap: (i) => _toast(context, 'Top btn #$i'),
-              ),
-              const SizedBox(height: 8),
-              Expanded(
-                child: LayoutBuilder(
-                  builder: (context, cons) {
-                    final parchmentHeight = cons.maxHeight * 1.9; // dłuuugi zwój
-                    return Center(
-                      child: SizedBox(
-                        width: cons.maxWidth - 24,
-                        height: parchmentHeight,
-                        child: _Parchment(
-                          controller: _scroll,
-                          height: parchmentHeight,
-                          frame: _frame,
-                          top: _topSeq,
-                          bottom: _botSeq,
-                          dots: _dots,
-                          onPlus: _onPlusTap,
-                          onDotTap: _editDot,
-                        ),
-                      ),
+      ),
+      // ⬇️ SafeArea NIE obejmuje całego Stacka — tylko górną część z UI
+      child: Stack(
+        fit: StackFit.expand,
+        children: [
+          // --- Główna kolumna ekranu w SafeArea (bez dołu) ---
+          SafeArea(
+            bottom: false, // 👈 dół pozostawiamy dla overlayu
+            child: Column(
+              children: [
+                const SizedBox(height: 6),
+                TopBar(
+                  icons: const [
+                    'assets/icons/top_-05.png',
+                    'assets/icons/top_-06.png',
+                    'assets/icons/top_-07.png',
+                    'assets/icons/top_-08.png',
+                  ],
+                  onTap: (i) {
+                    Navigator.of(context).push(
+                      MaterialPageRoute(builder: (_) => const UnderConstructionScreen()),
                     );
                   },
                 ),
-              ),
+                const SizedBox(height: 8),
+                Expanded(
+                  child: LayoutBuilder(
+                    builder: (context, cons) {
+                      final parchmentHeight = cons.maxHeight * 1.9; // dłuuugi zwój
+                      return Center(
+                        child: Transform.translate(
+                          offset: const Offset(0, -20),
+                          child: SizedBox(
+                            width: cons.maxWidth - 30,
+                            height: parchmentHeight,
+                            child: _Parchment(
+                              controller: _scroll,
+                              height: parchmentHeight,
+                              frame: _frame,
+                              top: _topSeq,
+                              bottom: _botSeq,
+                              dots: _dots,
+                              onPlus: _onPlusTap,
+                              onDotTap: _editDot,
+                              scrollWidth: (cons.maxWidth - 54) * 0.96,
+                            ),
+                          ),
+                        ),
+                      );
+                    },
+                  ),
+                ),
+              ],
+            ),
+          ),
+          // --- Dolny pasek jako OVERLAY poza SafeArea ---
+          BottomBarOverlay(
+            bottomOffset: 24, // podnieś/opuść pasek względem dolnej krawędzi
+            icons: [
+              BottomIconSpec('assets/icons/bottom_scroll.png', () => _toast(context, 'Scroll')),
+              BottomIconSpec('assets/icons/bottom_quill.png',  () => _toast(context, 'Quill')),
+              BottomIconSpec('assets/icons/bottom_sun.png',    () => _toast(context, 'Sun')),
+              BottomIconSpec('assets/icons/bottom_fire.png',   () => _toast(context, 'Fire')),
+              BottomIconSpec('assets/icons/bottom_star.png',   () {
+                Navigator.of(context).push(
+                  MaterialPageRoute(builder: (_) => const WorldMapScreen()),
+                );
+              }),
             ],
           ),
-        ),
+        ],
       ),
-    );
-  }
+    ),
+  );
+}
+
 
   void _toast(BuildContext context, String msg) {
     ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(msg), duration: const Duration(milliseconds: 800)));
@@ -192,87 +248,146 @@ class _Parchment extends StatelessWidget {
   final List<_MapDot> dots;
   final Future<void> Function(Size parchmentSize) onPlus;
   final void Function(int index) onDotTap;
-  const _Parchment({required this.controller, required this.height, required this.frame, required this.top, required this.bottom, required this.dots, required this.onPlus, required this.onDotTap,});
+  final double scrollWidth;
+  const _Parchment({required this.controller, required this.height, required this.frame, required this.top, required this.bottom, required this.dots, required this.onPlus, required this.onDotTap,  required this.scrollWidth});
 
   @override
   Widget build(BuildContext context) {
-    return Stack(
-      children: [
-        // SCROLL
-        SingleChildScrollView(
-          controller: controller,
-          physics: const BouncingScrollPhysics(),
-          child: LayoutBuilder(builder: (context, c) {
-            final w = c.maxWidth;
-            final h = height; // całkowita wysokość zwoju
-            const double kPlusTop = 12;   // jak w Positioned(top: 12)
-            const double kPlusSize = 56;  // jak w Container(width/height: 56)
-            final double anchorRelX = 0.5;
-            final double anchorRelY = (kPlusTop + kPlusSize / 2) / h;
+    return LayoutBuilder(builder: (context, c) {
+      final w = c.maxWidth;
 
-            return Stack(
-              children: [
-                // TŁO PERGAMINU (powtarzany tile w pionie)
-                SizedBox(
-                  width: w,
-                  height: h,
-                  child: DecoratedBox(
-                    decoration: const BoxDecoration(
-                      image: DecorationImage(
-                        image: AssetImage('assets/parchment/parchment_tile.png'),
-                        repeat: ImageRepeat.repeatY,
-                        alignment: Alignment.topCenter,
-                        fit: BoxFit.cover,
+      // 1) Wymiary klatek rolek (jeśli brak, przyjmij 0)
+      final Size topSize   = top?.frameSize()    ?? const Size(0, 0);
+      final Size bottomSize= bottom?.frameSize() ?? const Size(0, 0);
+
+      const double topOffset    = 12;   // przesuń GÓRNĄ rolkę w DÓŁ o X px
+      const double bottomOffset = 80;   // przesuń DOLNĄ rolkę w GÓRĘ o X px
+      const double gap          = 0;   // odstęp między każdą rolką a pergaminem
+
+      return Stack(
+        children: [
+          // ===  A) STAŁE ROLKI: NA GÓRZE I NA DOLE  ===
+          if (top != null)
+            Positioned(
+              top: topOffset,
+              left: (w - topSize.width) / 2,
+              width: topSize.width,
+              height: topSize.height,
+              child: IgnorePointer(
+                child: CustomPaint(
+                  painter: _SingleImagePainter(top!.frame(frame)),
+                ),
+              ),
+            ),
+
+          if (bottom != null)
+            Positioned(
+              bottom: bottomOffset,
+              left: (w - bottomSize.width) / 2,
+              width: bottomSize.width,
+              height: bottomSize.height,
+              child: IgnorePointer(
+                child: CustomPaint(
+                  painter: _SingleImagePainter(bottom!.frame(frame)),
+                ),
+              ),
+            ),
+
+          // ===  B) SCROLL PERGAMINU MIĘDZY ROLKAMI  ===
+          // wałki nie klipują; pergamin ma margines top/bottom równy wysokościom rolek + gap
+          Positioned.fill(
+            top: topOffset + topSize.height + gap,
+            bottom: bottomOffset + bottomSize.height + gap,
+            child: SingleChildScrollView(
+              controller: controller,
+              physics: const BouncingScrollPhysics(),
+              child: LayoutBuilder(builder: (context, inner) {
+                final ww = inner.maxWidth;
+                final hh = height; // całkowita wysokość zawartości pergaminu
+
+                return Stack(
+                  children: [
+                    // TŁO pergaminu — powtarzany tile w pionie
+                    Align(
+                      alignment: Alignment.topCenter,
+                      child:SizedBox(
+                        width: scrollWidth,
+                        height: hh,
+                        child: const DecoratedBox(
+                          decoration: BoxDecoration(
+                            image: DecorationImage(
+                              image: AssetImage('assets/parchment/parchment_tile.png'),
+                              repeat: ImageRepeat.repeatY,
+                              alignment: Alignment.topCenter,
+                              //fit: BoxFit.fill, // lub usuń fit, jeśli tile ma idealną szerokość
+                            ),
+                          ),
+                        ),
                       ),
                     ),
-                  ),
-                ),
-
-                // WARSTWA: ścieżka + kropki (mapa)
-                SizedBox(
-                  width: w,
-                  height: h,
-                  child: _MapLayer(dots: dots,
-                  anchorRelX: anchorRelX,
-                  anchorRelY: anchorRelY,
-                  onDotTap: onDotTap,),
-                ),
-
-                // PRZYCISK "+" w górnej części zwoju
-                Positioned(
-                  top: 12,
-                  left: (w - 56) / 2,
-                  child: GestureDetector(
-                    onTap: () => onPlus(Size(w, h)),
-                    child: Container(
-                      width: 56,
-                      height: 56,
-                      decoration: BoxDecoration(shape: BoxShape.circle, color: Colors.black.withOpacity(0.08)),
-                      alignment: Alignment.center,
-                      child: Image.asset('assets/icons/add_task_icon.png', width: 28, height: 28),
+                    // MAPA: przerywana linia + kropki
+                    SizedBox(
+                      width: ww,
+                      height: hh,
+                      child: _MapLayer(
+                        dots: dots,
+                        anchorRelX: 0.5, 
+                        anchorRelY: (12 + 56/2) / hh,
+                        onDotTap: onDotTap,
+                      ),
                     ),
-                  ),
-                ),
 
-                // ANIMOWANE ROLKI (góra/dół) – warstwa na wierzchu
-                if (top != null && bottom != null)
-                  Positioned.fill(
-                    child: CustomPaint(painter: _RollsPainterSeq(top: top!, bottom: bottom!, frame: frame)),
-                  ),
-              ],
-            );
-          }),
-        ),
-      ],
-    );
+                    // Przyciski/banery na pergaminie (np. „START” itd.)
+                    // + przycisk „+” przy górnej krawędzi obszaru pergaminu
+                    Positioned(
+                      top: 12,
+                      left: (ww - 56) / 2,
+                      child: GestureDetector(
+                        onTap: () => onPlus(Size(ww, hh)),
+                        child: Container(
+                          width: 56, height: 56,
+                          decoration: BoxDecoration(
+                            shape: BoxShape.circle,
+                            color: Colors.black.withOpacity(0.08),
+                          ),
+                          alignment: Alignment.center,
+                          child: Image.asset('assets/icons/add_task_icon.png', width: 28, height: 28),
+                        ),
+                      ),
+                    ),
+                  ],
+                );
+              }),
+            ),
+          ),
+        ],
+      );
+    });
   }
+}
+
+// Pomocniczy painter do narysowania jednej klatki (np. dolnej rolki)
+class _SingleImagePainter extends CustomPainter {
+  final ui.Image img;
+  _SingleImagePainter(this.img);
+
+  @override
+  void paint(Canvas canvas, Size size) {
+    final src = Offset.zero & Size(img.width.toDouble(), img.height.toDouble());
+    final dst = Offset.zero & size;
+    canvas.drawImageRect(img, src, dst, Paint());
+  }
+
+  @override
+  bool shouldRepaint(covariant _SingleImagePainter old) => old.img != img;
 }
 
 class _RollsPainterSeq extends CustomPainter {
   final SpriteFrames top;
   final SpriteFrames bottom;
   final int frame;
-  _RollsPainterSeq({required this.top, required this.bottom, required this.frame});
+  final bool debug;
+  _RollsPainterSeq({required this.top, required this.bottom, required this.frame, this.debug=false});
 
   @override
   void paint(Canvas canvas, Size size) {
@@ -282,9 +397,14 @@ class _RollsPainterSeq extends CustomPainter {
     final botSize = bottom.frameSize();
 
     final topDst = Rect.fromLTWH((size.width - topSize.width) / 2, 0, topSize.width, topSize.height);
-    canvas.drawImageRect(topImg, Offset.zero & Size(topImg.width.toDouble(), topImg.height.toDouble()), topDst, Paint());
-
     final botDst = Rect.fromLTWH((size.width - botSize.width) / 2, size.height - botSize.height, botSize.width, botSize.height);
+    
+    if (debug) {
+      final dbg = Paint()..color = const Color(0x8800FF00);
+      canvas.drawRect(topDst, dbg);
+      canvas.drawRect(botDst, dbg);
+    }
+    canvas.drawImageRect(topImg, Offset.zero & Size(topImg.width.toDouble(), topImg.height.toDouble()), topDst, Paint());
     canvas.drawImageRect(botImg, Offset.zero & Size(botImg.width.toDouble(), botImg.height.toDouble()), botDst, Paint());
   }
 
@@ -325,15 +445,10 @@ class _MapLayer extends StatelessWidget {
             top: pos.dy - 18,
             child: GestureDetector(
               onTap: () => onDotTap(i),
-              child: Container(
+              child: Image.asset(
+                _assetForDifficulty(d.task.difficulty), // 👈 wybór odpowiedniego PNG
                 width: 36,
                 height: 36,
-                decoration: BoxDecoration(
-                  color: d.color,
-                  shape: BoxShape.circle,
-                  boxShadow: const [BoxShadow(blurRadius: 6, color: Colors.black26, offset: Offset(0, 2))],
-                  border: Border.all(color: Colors.black26, width: 1),
-                ),
               ),
             ),
           );
@@ -343,41 +458,40 @@ class _MapLayer extends StatelessWidget {
   }
 }
 
-class _TopBar extends StatelessWidget {
-  final List<String> icons;
-  final void Function(int) onTap;
-  const _TopBar({required this.icons, required this.onTap});
+// class _TopBar extends StatelessWidget {
+//   final List<String> icons;           // np. ['assets/icons/top_1.png', ...]
+//   final void Function(int) onTap;     // callback
+//   const _TopBar({required this.icons, required this.onTap});
 
-  @override
-  Widget build(BuildContext context) {
-    return Padding(
-      padding: const EdgeInsets.symmetric(horizontal: 12),
-      child: Row(
-        children: [
-          for (int i = 0; i < 4; i++) ...[
-            GestureDetector(
-              onTap: () => onTap(i),
-              child: Container(
-                width: 48,
-                height: 48,
-                margin: const EdgeInsets.only(right: 8),
-                decoration: BoxDecoration(
-                  color: const Color(0xFFEED9B6),
-                  borderRadius: BorderRadius.circular(10),
-                  border: Border.all(color: const Color(0xFF7A5A3A)),
-                ),
-                child: Padding(
-                  padding: const EdgeInsets.all(6),
-                  child: Image.asset(icons[i], fit: BoxFit.contain),
-                ),
-              ),
-            ),
-          ]
-        ],
-      ),
-    );
-  }
-}
+//   @override
+//   Widget build(BuildContext context) {
+//     return Padding(
+//       padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
+//       child: Row(
+//         mainAxisAlignment: MainAxisAlignment.spaceEvenly,   // 👈 równe rozmieszczenie
+//         children: List.generate(icons.length, (i) {
+//           return GestureDetector(
+//             onTap: () => onTap(i),
+//             behavior: HitTestBehavior.opaque,
+//             child: SizedBox(                          // „hit area”, ale bez tła
+//               width: 80,                              // dopasuj do swoich PNG
+//               height: 80,
+//               child: Center(
+//                 child: Image.asset(
+//                   icons[i],
+//                   width: 118,                          // rozmiar samej ikony
+//                   height: 117,
+//                   fit: BoxFit.contain,
+//                 ),
+//               ),
+//             ),
+//           );
+//         }),
+//       ),
+//     );
+//   }
+// }
+
 
 // ====== MODELE ======
 enum Difficulty { easy, medium, hard }
@@ -410,3 +524,33 @@ class _MapDot {
   final TaskData task;
   const _MapDot({required this.relX, required this.relY, required this.color, required this.task});
 }
+
+String _assetForDifficulty(Difficulty diff) {
+  switch (diff) {
+    case Difficulty.easy:
+      return 'assets/icons/dot_easy.png';
+    case Difficulty.medium:
+      return 'assets/icons/dot_medium.png';
+    case Difficulty.hard:
+      return 'assets/icons/dot_hard.png';
+  }
+}
+
+// class _BottomIconButton extends StatelessWidget {
+//   final String asset;
+//   final VoidCallback onTap;
+
+//   const _BottomIconButton(this.asset, this.onTap);
+
+//   @override
+//   Widget build(BuildContext context) {
+//     return GestureDetector(
+//       onTap: onTap,
+//       child: SizedBox(
+//         width: 56,
+//         height: 56,
+//         child: Image.asset(asset, fit: BoxFit.contain),
+//       ),
+//     );
+//   }
+// }

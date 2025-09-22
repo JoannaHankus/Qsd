@@ -26,8 +26,8 @@ class ParchmentMapPainter extends CustomPainter {
     canvas.drawPath(dashed, paintStroke);
 
     // ognisko w ~1/2 trasy (dla efektu)
-    final mid = points[(points.length / 2).floor()];
-    _drawCampfire(canvas, mid);
+    //final mid = points[(points.length / 2).floor()];
+    //_drawCampfire(canvas, mid);
   }
 
   @override
